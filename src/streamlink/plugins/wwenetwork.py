@@ -1,13 +1,13 @@
 import json
 import logging
 import re
+from functools import lru_cache
 from urllib.parse import parse_qsl, urlparse
 
 from streamlink import PluginError
 from streamlink.plugin import Plugin, PluginArgument, PluginArguments
 from streamlink.plugin.api import useragents
 from streamlink.stream import HLSStream
-from streamlink.utils import memoize
 from streamlink.utils.times import seconds_to_hhmmss
 
 log = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ class WWENetwork(Plugin):
     )
 
     def __init__(self, url):
-        super(WWENetwork, self).__init__(url)
+        super().__init__(url)
         self.session.http.headers.update({"User-Agent": useragents.CHROME})
         self.auth_token = None
 
@@ -91,7 +91,7 @@ class WWENetwork(Plugin):
         return self.auth_token
 
     @property
-    @memoize
+    @lru_cache(maxsize=128)
     def item_config(self):
         log.debug("Loading page config")
         p = urlparse(self.url)
@@ -153,12 +153,11 @@ class WWENetwork(Plugin):
             log.debug("Found content ID: {0}".format(content_id))
             info = self._get_media_info(content_id)
             if info.get("hlsUrl"):
-                for s in HLSStream.parse_variant_playlist(
+                yield from HLSStream.parse_variant_playlist(
                     self.session,
                     info["hlsUrl"],
                     start_offset=start_point
-                ).items():
-                    yield s
+                ).items()
             else:
                 log.error("Could not find the HLS URL")
 

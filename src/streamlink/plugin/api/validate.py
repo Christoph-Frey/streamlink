@@ -50,28 +50,28 @@ def _is_re_match(value):
 class any(tuple):
     """At least one of the schemas must be valid."""
     def __new__(cls, *args):
-        return super(any, cls).__new__(cls, args)
+        return super().__new__(cls, args)
 
 
 class all(tuple):
     """All schemas must be valid."""
     def __new__(cls, *args):
-        return super(all, cls).__new__(cls, args)
+        return super().__new__(cls, args)
 
 
-class SchemaContainer(object):
+class SchemaContainer:
     def __init__(self, schema):
         self.schema = schema
 
 
-class transform(object):
+class transform:
     """Applies function to value to transform it."""
 
     def __init__(self, func):
         self.func = func
 
 
-class optional(object):
+class optional:
     """An optional key used in a dict or union-dict."""
 
     def __init__(self, key):
@@ -86,7 +86,7 @@ class attr(SchemaContainer):
     """Validates an object's attributes."""
 
 
-class xml_element(object):
+class xml_element:
     """A XML element."""
 
     def __init__(self, tag=None, text=None, attrib=None):
@@ -454,7 +454,7 @@ def validate_unions(schema, value):
     return validate_union(schema.schema, value)
 
 
-class Schema(object):
+class Schema:
     """Wraps a validator schema into a object."""
 
     def __init__(self, *schemas):

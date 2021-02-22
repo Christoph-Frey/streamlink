@@ -8,6 +8,7 @@ from setuptools import find_packages, setup
 import versioneer
 
 
+data_files = []
 deps = [
     "requests>=2.21.0,<3.0",
     "isodate",
@@ -63,6 +64,19 @@ if is_wheel_for_windows():
     entry_points["gui_scripts"] = ["streamlinkw=streamlink_cli.main:main"]
 
 
+additional_files = [
+    ("share/man/man1", ["docs/_build/man/streamlink.1"])
+]
+
+for destdir, srcfiles in additional_files:
+    files = []
+    for srcfile in srcfiles:
+        if path.exists(srcfile):
+            files.append(srcfile)
+    if files:
+        data_files.append((destdir, files))
+
+
 setup(name="streamlink",
       version=versioneer.get_version(),
       cmdclass=versioneer.get_cmdclass(),
@@ -80,11 +94,12 @@ setup(name="streamlink",
       },
       author="Streamlink",
       # temp until we have a mailing list / global email
-      author_email="charlie@charliedrage.com",
+      author_email="streamlink@protonmail.com",
       license="Simplified BSD",
       packages=find_packages("src"),
       package_dir={"": "src"},
       entry_points=entry_points,
+      data_files=data_files,
       install_requires=deps,
       test_suite="tests",
       python_requires=">=3.6, <4",

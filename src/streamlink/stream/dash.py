@@ -3,6 +3,7 @@ import datetime
 import itertools
 import logging
 import os.path
+from collections import defaultdict
 from urllib.parse import urlparse, urlunparse
 
 import requests
@@ -90,6 +91,10 @@ class DASHStreamWorker(SegmentedStreamWorker):
             representation = self.get_representation(self.mpd, self.reader.representation_id, self.reader.mime_type)
             refresh_wait = max(self.mpd.minimumUpdatePeriod.total_seconds(),
                                self.mpd.periods[0].duration.total_seconds()) or 5
+
+            if self.mpd.type == "static":
+                refresh_wait = 5
+
             with sleeper(refresh_wait * back_off_factor):
                 if representation:
                     for segment in representation.segments(init=init):
@@ -151,7 +156,7 @@ class DASHStream(Stream):
                  audio_representation=None,
                  period=0,
                  **args):
-        super(DASHStream, self).__init__(session)
+        super().__init__(session)
         self.mpd = mpd
         self.video_representation = video_representation
         self.audio_representation = audio_representation
@@ -174,7 +179,6 @@ class DASHStream(Stream):
         :param url_or_manifest: URL of the manifest file or an XML manifest string
         :return: a dict of name -> DASHStream instances
         """
-        ret = {}
 
         if url_or_manifest.startswith('<?xml'):
             mpd = MPD(parse_xml(url_or_manifest, ignore_ns=True))
@@ -233,6 +237,7 @@ class DASHStream(Stream):
         if len(available_languages) > 1:
             audio = list(filter(lambda a: a.lang is None or a.lang == lang, audio))
 
+        ret = []
         for vid, aud in itertools.product(video, audio):
             stream = DASHStream(session, mpd, vid, aud, **args)
             stream_name = []
@@ -241,8 +246,24 @@ class DASHStream(Stream):
                 stream_name.append("{:0.0f}{}".format(vid.height or vid.bandwidth_rounded, "p" if vid.height else "k"))
             if audio and len(audio) > 1:
                 stream_name.append("a{:0.0f}k".format(aud.bandwidth))
-            ret['+'.join(stream_name)] = stream
-        return ret
+            ret.append(('+'.join(stream_name), stream))
+
+        # rename duplicate streams
+        dict_value_list = defaultdict(list)
+        for k, v in ret:
+            dict_value_list[k].append(v)
+
+        ret_new = {}
+        for q in dict_value_list:
+            items = dict_value_list[q]
+            for n in range(len(items)):
+                if n == 0:
+                    ret_new[q] = items[n]
+                elif n == 1:
+                    ret_new[f'{q}_alt'] = items[n]
+                else:
+                    ret_new[f'{q}_alt{n}'] = items[n]
+        return ret_new
 
     def open(self):
         if self.video_representation:
@@ -261,4 +282,7 @@ class DASHStream(Stream):
             return audio
 
     def to_url(self):
+        return self.mpd.url
+
+    def to_manifest_url(self):
         return self.mpd.url

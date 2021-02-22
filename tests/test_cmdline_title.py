@@ -7,12 +7,9 @@ from tests.test_cmdline import CommandLineTestCase
 @unittest.skipIf(is_win32, "test only applicable in a POSIX OS")
 class TestCommandLineWithTitlePOSIX(CommandLineTestCase):
     def test_open_player_with_title_vlc(self):
-        self._test_args(["streamlink", "-p", "/usr/bin/vlc", "--title", "{title}", "http://test.se", "test"],
-                        ["/usr/bin/vlc", "--input-title-format", 'Test Title', "-"])
-
-    def test_open_player_with_unicode_author_vlc(self):
-        self._test_args(["streamlink", "-p", "/usr/bin/vlc", "--title", "{author}", "http://test.se", "test"],
-                        ["/usr/bin/vlc", "--input-title-format", u"Tѥst Āuƭhǿr", "-"])
+        self._test_args(["streamlink", "-p", "/usr/bin/vlc",
+                         "--title", "{title} - {author} - {category}", "http://test.se", "test"],
+                        ["/usr/bin/vlc", "--input-title-format", "Test Title - Tѥst Āuƭhǿr - No Category", "-"])
 
     def test_open_player_with_default_title_vlc(self):
         self._test_args(["streamlink", "-p", "/usr/bin/vlc", "http://test.se", "test"],
@@ -24,11 +21,11 @@ class TestCommandLineWithTitlePOSIX(CommandLineTestCase):
 
     def test_open_player_with_title_mpv(self):
         self._test_args(["streamlink", "-p", "/usr/bin/mpv", "--title", "{title}", "http://test.se", "test"],
-                        ["/usr/bin/mpv", "--title=Test Title", "-"])
+                        ["/usr/bin/mpv", "--force-media-title=Test Title", "-"])
 
     def test_unicode_title_2444(self):
-        self._test_args(["streamlink", "-p", "mpv", "-t", "★", "http://test.se", "test"],
-                        ["mpv", u'--title=\u2605', "-"])
+        self._test_args(["streamlink", "-p", "mpv", "-t", "★ ★ ★", "http://test.se", "test"],
+                        ["mpv", "--force-media-title=★ ★ ★", "-"])
 
 
 @unittest.skipIf(not is_win32, "test only applicable on Windows")
@@ -36,15 +33,8 @@ class TestCommandLineWithTitleWindows(CommandLineTestCase):
     def test_open_player_with_title_vlc(self):
         self._test_args(
             ["streamlink", "-p", "c:\\Program Files\\VideoLAN\\vlc.exe",
-             "--title", "{title}", "http://test.se", "test"],
-            "c:\\Program Files\\VideoLAN\\vlc.exe --input-title-format \"Test Title\" -"
-        )
-
-    def test_open_player_with_unicode_author_vlc_py3(self):
-        self._test_args(
-            ["streamlink", "-p", "c:\\Program Files\\VideoLAN\\vlc.exe",
-             "--title", "{author}", "http://test.se", "test"],
-            u"c:\\Program Files\\VideoLAN\\vlc.exe --input-title-format \"Tѥst Āuƭhǿr\" -"
+             "--title", "{title} - {author} - {category}", "http://test.se", "test"],
+            "c:\\Program Files\\VideoLAN\\vlc.exe --input-title-format \"Test Title - Tѥst Āuƭhǿr - No Category\" -"
         )
 
     def test_open_player_with_default_title_vlc(self):
@@ -72,8 +62,8 @@ class TestCommandLineWithTitleWindows(CommandLineTestCase):
         self._test_args(
             ["streamlink", "-p", "\"c:\\Program Files\\DAUM\\PotPlayer\\PotPlayerMini64.exe\"",
              "--title", "{author}", "http://test.se/stream", "hls", "--player-passthrough", "hls"],
-            u"\"c:\\Program Files\\DAUM\\PotPlayer\\PotPlayerMini64.exe\" "
-            + u"\"http://test.se/playlist.m3u8\\Tѥst Āuƭhǿr\"",
+            "\"c:\\Program Files\\DAUM\\PotPlayer\\PotPlayerMini64.exe\" "
+            + "\"http://test.se/playlist.m3u8\\Tѥst Āuƭhǿr\"",
             passthrough=True
         )
 
@@ -87,5 +77,5 @@ class TestCommandLineWithTitleWindows(CommandLineTestCase):
         )
 
     def test_unicode_title_2444_py3(self):
-        self._test_args(["streamlink", "-p", "mpv", "-t", "★", "http://test.se", "test"],
-                        "mpv --title=★ -")
+        self._test_args(["streamlink", "-p", "mpv", "-t", "★ ★ ★", "http://test.se", "test"],
+                        "mpv \"--force-media-title=★ ★ ★\" -")

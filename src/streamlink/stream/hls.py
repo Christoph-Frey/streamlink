@@ -2,6 +2,7 @@ import logging
 import re
 import struct
 from collections import OrderedDict, defaultdict, namedtuple
+from threading import Event
 from urllib.parse import urlparse
 
 from Crypto.Cipher import AES
@@ -40,7 +41,6 @@ class HLSStreamWriter(SegmentedStreamWriter):
         kwargs["retries"] = options.get("hls-segment-attempts")
         kwargs["threads"] = options.get("hls-segment-threads")
         kwargs["timeout"] = options.get("hls-segment-timeout")
-        kwargs["ignore_names"] = options.get("hls-segment-ignore-names")
         SegmentedStreamWriter.__init__(self, reader, *args, **kwargs)
 
         self.byterange_offsets = defaultdict(int)
@@ -49,13 +49,11 @@ class HLSStreamWriter(SegmentedStreamWriter):
         self.key_uri_override = options.get("hls-segment-key-uri")
         self.stream_data = options.get("hls-segment-stream-data")
 
-        if self.ignore_names:
-            # creates a regex from a list of segment names,
-            # this will be used to ignore segments.
-            self.ignore_names = list(set(self.ignore_names))
-            self.ignore_names = "|".join(list(map(re.escape, self.ignore_names)))
-            self.ignore_names_re = re.compile(r"(?:{blacklist})\.ts".format(
-                blacklist=self.ignore_names), re.IGNORECASE)
+        self.ignore_names = False
+        ignore_names = {*options.get("hls-segment-ignore-names")}
+        if ignore_names:
+            segments = "|".join(map(re.escape, ignore_names))
+            self.ignore_names = re.compile(rf"(?:{segments})\.ts", re.IGNORECASE)
 
     def create_decryptor(self, key, sequence):
         if key.method != "AES-128":
@@ -116,10 +114,6 @@ class HLSStreamWriter(SegmentedStreamWriter):
 
         try:
             request_params = self.create_request_params(sequence)
-            # skip ignored segment names
-            if self.ignore_names and self.ignore_names_re.search(sequence.segment.uri):
-                log.debug("Skipping segment {0}".format(sequence.num))
-                return
 
             return self.session.http.get(sequence.segment.uri,
                                          stream=(self.stream_data
@@ -132,7 +126,25 @@ class HLSStreamWriter(SegmentedStreamWriter):
             log.error(f"Failed to open segment {sequence.num}: {err}")
             return
 
-    def write(self, sequence, res, chunk_size=8192):
+    def should_filter_sequence(self, sequence):
+        return self.ignore_names and self.ignore_names.search(sequence.segment.uri) is not None
+
+    def write(self, sequence, *args, **kwargs):
+        if not self.should_filter_sequence(sequence):
+            try:
+                return self._write(sequence, *args, **kwargs)
+            finally:
+                # unblock reader thread after writing data to the buffer
+                if not self.reader.filter_event.is_set():
+                    log.info("Resuming stream output")
+                    self.reader.filter_event.set()
+
+        # block reader thread if filtering out segments
+        elif self.reader.filter_event.is_set():
+            log.info("Filtering out segments and pausing stream output")
+            self.reader.filter_event.clear()
+
+    def _write(self, sequence, res, chunk_size=8192):
         if sequence.segment.key and sequence.segment.key.method != "NONE":
             try:
                 decryptor = self.create_decryptor(sequence.segment.key,
@@ -329,17 +341,39 @@ class HLSStreamReader(SegmentedStreamReader):
         self.request_params = dict(stream.args)
         self.timeout = stream.session.options.get("hls-timeout")
 
+        self.filter_event = Event()
+        self.filter_event.set()
+
         # These params are reserved for internal use
         self.request_params.pop("exception", None)
         self.request_params.pop("stream", None)
         self.request_params.pop("timeout", None)
         self.request_params.pop("url", None)
 
+    def read(self, size):
+        while True:
+            try:
+                return super().read(size)
+            except OSError:
+                # wait indefinitely until filtering ends
+                self.filter_event.wait()
+                if self.buffer.closed:
+                    return b""
+                # if data is available, try reading again
+                if self.buffer.length > 0:
+                    continue
+                # raise if not filtering and no data available
+                raise
+
+    def close(self):
+        super().close()
+        self.filter_event.set()
+
 
 class MuxedHLSStream(MuxedStream):
     __shortname__ = "hls-multi"
 
-    def __init__(self, session, video, audio, force_restart=False, ffmpeg_options=None, **args):
+    def __init__(self, session, video, audio, url_master=None, force_restart=False, ffmpeg_options=None, **args):
         tracks = [video]
         maps = ["0:v?", "0:a?"]
         if audio:
@@ -352,7 +386,11 @@ class MuxedHLSStream(MuxedStream):
         substreams = map(lambda url: HLSStream(session, url, force_restart=force_restart, **args), tracks)
         ffmpeg_options = ffmpeg_options or {}
 
-        super(MuxedHLSStream, self).__init__(session, *substreams, format="mpegts", maps=maps, **ffmpeg_options)
+        super().__init__(session, *substreams, format="mpegts", maps=maps, **ffmpeg_options)
+        self.url_master = url_master
+
+    def to_manifest_url(self):
+        return self.url_master
 
 
 class HLSStream(HTTPStream):
@@ -367,18 +405,23 @@ class HLSStream(HTTPStream):
     """
 
     __shortname__ = "hls"
+    __reader__ = HLSStreamReader
 
-    def __init__(self, session_, url, force_restart=False, start_offset=0, duration=None, **args):
+    def __init__(self, session_, url, url_master=None, force_restart=False, start_offset=0, duration=None, **args):
         HTTPStream.__init__(self, session_, url, **args)
+        self.url_master = url_master
         self.force_restart = force_restart
         self.start_offset = start_offset
         self.duration = duration
 
     def __repr__(self):
-        return "<HLSStream({0!r})>".format(self.url)
+        return f"<HLSStream({self.url!r}, {self.url_master!r})>"
 
     def __json__(self):
         json = HTTPStream.__json__(self)
+
+        if self.url_master:
+            json["master"] = self.url_master
 
         # Pretty sure HLS is GET only.
         del json["method"]
@@ -386,8 +429,11 @@ class HLSStream(HTTPStream):
 
         return json
 
+    def to_manifest_url(self):
+        return self.url_master
+
     def open(self):
-        reader = HLSStreamReader(self)
+        reader = self.__reader__(self)
         reader.open()
 
         return reader
@@ -414,9 +460,6 @@ class HLSStream(HTTPStream):
                          name, pixels, bitrate.
         """
         locale = session_.localization
-        # Backwards compatibility with "namekey" and "nameprefix" params.
-        name_key = request_params.pop("namekey", name_key)
-        name_prefix = request_params.pop("nameprefix", name_prefix)
         audio_select = session_.options.get("hls-audio-select") or []
 
         res = session_.http.get(url, exception=IOError, **request_params)
@@ -424,7 +467,7 @@ class HLSStream(HTTPStream):
         try:
             parser = cls._get_variant_playlist(res)
         except ValueError as err:
-            raise IOError("Failed to parse playlist: {0}".format(err))
+            raise OSError("Failed to parse playlist: {0}".format(err))
 
         streams = OrderedDict()
         for playlist in filter(lambda p: not p.is_iframe, parser.playlists):
@@ -508,16 +551,16 @@ class HLSStream(HTTPStream):
             external_audio = preferred_audio or default_audio or fallback_audio
 
             if external_audio and FFMPEGMuxer.is_usable(session_):
-                external_audio_msg = u", ".join([
-                    u"(language={0}, name={1})".format(x.language, (x.name or "N/A"))
+                external_audio_msg = ", ".join([
+                    f"(language={x.language}, name={x.name or 'N/A'})"
                     for x in external_audio
                 ])
-                log.debug(u"Using external audio tracks for stream {0} {1}".format(
-                          stream_name, external_audio_msg))
+                log.debug(f"Using external audio tracks for stream {stream_name} {external_audio_msg}")
 
                 stream = MuxedHLSStream(session_,
                                         video=playlist.uri,
                                         audio=[x.uri for x in external_audio if x.uri],
+                                        url_master=url,
                                         force_restart=force_restart,
                                         start_offset=start_offset,
                                         duration=duration,
@@ -525,6 +568,7 @@ class HLSStream(HTTPStream):
             else:
                 stream = cls(session_,
                              playlist.uri,
+                             url_master=url,
                              force_restart=force_restart,
                              start_offset=start_offset,
                              duration=duration,

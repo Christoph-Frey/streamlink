@@ -17,6 +17,7 @@ class Schoolism(Plugin):
     playlist_re = re.compile(r"var allVideos\s*=\s*(\[.*\]);", re.DOTALL)
     js_to_json = partial(re.compile(r'(?!<")(\w+):(?!/)').sub, r'"\1":')
     fix_brackets = partial(re.compile(r',\s*\}').sub, r'}')
+    fix_colon_in_title = partial(re.compile(r'"title":""(.*?)":(.*?)"').sub, r'"title":"\1:\2"')
     playlist_schema = validate.Schema(
         validate.transform(playlist_re.search),
         validate.any(
@@ -25,6 +26,7 @@ class Schoolism(Plugin):
                 validate.get(1),
                 validate.transform(js_to_json),
                 validate.transform(fix_brackets),  # remove invalid ,
+                validate.transform(fix_colon_in_title),
                 validate.transform(parse_json),
                 [{
                     "sources": validate.all([{
@@ -120,11 +122,14 @@ class Schoolism(Plugin):
                                                      headers={"User-Agent": useragents.SAFARI_8,
                                                               "Referer": self.url})
                         elif source['type'] == "application/x-mpegurl":
-                            for s in HLSStream.parse_variant_playlist(self.session,
-                                                                      source["src"],
-                                                                      headers={"User-Agent": useragents.SAFARI_8,
-                                                                               "Referer": self.url}).items():
-                                yield s
+                            yield from HLSStream.parse_variant_playlist(
+                                self.session,
+                                source["src"],
+                                headers={
+                                    "User-Agent": useragents.SAFARI_8,
+                                    "Referer": self.url
+                                }
+                            ).items()
 
             if not found:
                 log.error(f"Could not find {video_type} Part {part}")

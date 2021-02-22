@@ -9,7 +9,9 @@ from streamlink.utils.args import (
     boolean, comma_list, comma_list_filter, filesize, keyvalue, num
 )
 from streamlink.utils.times import hours_minutes_seconds
-from streamlink_cli.constants import (DEFAULT_PLAYER_ARGUMENTS, DEFAULT_STREAM_METADATA, STREAM_PASSTHROUGH, SUPPORTED_PLAYERS)
+from streamlink_cli.constants import (
+    DEFAULT_STREAM_METADATA, PLAYER_ARGS_INPUT_DEFAULT, PLAYER_ARGS_INPUT_FALLBACK, STREAM_PASSTHROUGH, SUPPORTED_PLAYERS
+)
 from streamlink_cli.utils import find_default_player
 
 _printable_re = re.compile(r"[{0}]".format(printable))
@@ -39,9 +41,9 @@ class ArgumentParser(argparse.ArgumentParser):
 
         name, value = option.group("name", "value")
         if name and value:
-            yield u"--{0}={1}".format(name, value)
+            yield f"--{name}={value}"
         elif name:
-            yield u"--{0}".format(name)
+            yield f"--{name}"
 
     def _match_argument(self, action, arg_strings_pattern):
         # - https://github.com/streamlink/streamlink/issues/971
@@ -73,6 +75,34 @@ class ArgumentParser(argparse.ArgumentParser):
 
         # return the number of arguments matched
         return len(match.group(1))
+
+    # fix `--help` not including nested argument groups
+    def format_help(self):
+        formatter = self._get_formatter()
+
+        # usage
+        formatter.add_usage(self.usage, self._actions,
+                            self._mutually_exclusive_groups)
+
+        # description
+        formatter.add_text(self.description)
+
+        def format_group(group):
+            # positionals, optionals and user-defined groups
+            for action_group in group._action_groups:
+                formatter.start_section(action_group.title)
+                formatter.add_text(action_group.description)
+                formatter.add_arguments(action_group._group_actions)
+                format_group(action_group)
+                formatter.end_section()
+
+        format_group(self)
+
+        # epilog
+        formatter.add_text(self.epilog)
+
+        # determine help from format above
+        return formatter.format_help()
 
 
 class HelpFormatter(argparse.RawDescriptionHelpFormatter):
@@ -273,6 +303,28 @@ def build_parser():
         Default is system locale.
         """
     )
+    general.add_argument(
+        "--interface",
+        type=str,
+        metavar="INTERFACE",
+        help="""
+        Set the network interface.
+        """
+    )
+    general.add_argument(
+        "-4", "--ipv4",
+        action="store_true",
+        help="""
+        Resolve address names to IPv4 only. This option overrides :option:`-6`.
+        """
+    )
+    general.add_argument(
+        "-6", "--ipv6",
+        action="store_true",
+        help="""
+        Resolve address names to IPv6 only. This option overrides :option:`-4`.
+        """
+    )
 
     player = parser.add_argument_group("Player options")
     player.add_argument(
@@ -310,33 +362,36 @@ def build_parser():
     player.add_argument(
         "-a", "--player-args",
         metavar="ARGUMENTS",
-        default=DEFAULT_PLAYER_ARGUMENTS,
-        help="""
+        default="",
+        help=f"""
         This option allows you to customize the default arguments which are put
         together with the value of --player to create a command to execute.
-        Unlike the --player parameter, custom player arguments will not be logged.
 
-        This value can contain formatting variables surrounded by curly braces,
+        It's usually enough to only use --player instead of this unless you need
+        to add arguments after the player's input argument or if you don't want
+        any of the player arguments to be logged.
+
+        The value can contain formatting variables surrounded by curly braces,
         {{ and }}. If you need to include a brace character, it can be escaped
         by doubling, e.g. {{{{ and }}}}.
 
         Formatting variables available:
 
-        {{filename}}
-            This is the filename that the player will use. It's usually "-"
-            (stdin), but can also be a URL or a file depending on the options
-            used.
+        {{{PLAYER_ARGS_INPUT_DEFAULT}}}
+            This is the input that the player will use. For standard input (stdin),
+            it is ``-``, but it can also be a URL, depending on the options used.
 
-        It's usually enough to use --player instead of this unless you need to
-        add arguments after the filename.
-
-        Default is "{0}".
+        {{{PLAYER_ARGS_INPUT_FALLBACK}}}
+            The old fallback variable name with the same functionality.
 
         Example:
 
-          %(prog)s -p vlc -a "--play-and-exit {{filename}}" <url> [stream]
+          %(prog)s -p vlc -a "--play-and-exit {{{PLAYER_ARGS_INPUT_DEFAULT}}}" <url> [stream]
 
-        """.format(DEFAULT_PLAYER_ARGUMENTS)
+        Note: When neither of the variables are found, ``{{{PLAYER_ARGS_INPUT_DEFAULT}}}``
+        will be appended to the whole parameter value, to ensure that the player
+        always receives an input argument.
+        """
     )
     player.add_argument(
         "-v", "--verbose-player",
@@ -462,7 +517,7 @@ def build_parser():
             inserted inside your --title string.
 
             A full list of the format codes mpv uses is available here:
-            https://mpv.io/manual/stable/#property-expansion
+            https://mpv.io/manual/stable/#property-list
 
         Formatting variables available to use in --title:
 
@@ -583,6 +638,13 @@ def build_parser():
 
         This is an alternative to setting the stream using a positional argument
         and can be useful if set in a config file.
+        """
+    )
+    stream.add_argument(
+        "--stream-url",
+        action="store_true",
+        help="""
+        If possible, translate the resolved stream to a URL and print it.
         """
     )
     stream.add_argument(
@@ -801,16 +863,13 @@ def build_parser():
         metavar="NAMES",
         type=comma_list,
         help="""
-        A comma-delimited list of segment names that will not be fetched.
+        A comma-delimited list of segment names that will get filtered out.
 
         Example: --hls-segment-ignore-names 000,001,002
 
         This will ignore every segment that ends with 000.ts, 001.ts and 002.ts
 
         Default is None.
-
-        Note: The --hls-timeout must be increased, to a time that is longer than
-        the ignored break.
         """
     )
     transport.add_argument(
@@ -927,7 +986,7 @@ def build_parser():
         processing (such as HDS) to avoid unnecessary background processing.
         """)
     transport.add_argument(
-        "--rtmp-proxy", "--rtmpdump-proxy",
+        "--rtmp-proxy",
         metavar="PROXY",
         help="""
         A SOCKS proxy that RTMP streams will use.
@@ -936,7 +995,7 @@ def build_parser():
         """
     )
     transport.add_argument(
-        "--rtmp-rtmpdump", "--rtmpdump",
+        "--rtmp-rtmpdump",
         metavar="FILENAME",
         help="""
         RTMPDump is used to access RTMP streams. You can specify the
@@ -945,6 +1004,7 @@ def build_parser():
         Example: "/usr/local/bin/rtmpdump"
         """
     )
+    transport.add_argument("--rtmpdump", help=argparse.SUPPRESS)
     transport.add_argument(
         "--rtmp-timeout",
         type=num(float, min=0),
@@ -1008,14 +1068,7 @@ def build_parser():
         Default is 60.0.
         """)
     transport.add_argument(
-        "--stream-url",
-        action="store_true",
-        help="""
-        If possible, translate the stream to a URL and print it.
-        """
-    )
-    transport.add_argument(
-        "--subprocess-cmdline", "--cmdline", "-c",
+        "--subprocess-cmdline",
         action="store_true",
         help="""
         Print the command-line used internally to play the stream.
@@ -1024,7 +1077,7 @@ def build_parser():
         """
     )
     transport.add_argument(
-        "--subprocess-errorlog", "--errorlog", "-e",
+        "--subprocess-errorlog",
         action="store_true",
         help="""
         Log possible errors from internal subprocesses to a temporary file. The
@@ -1034,7 +1087,7 @@ def build_parser():
         """
     )
     transport.add_argument(
-        "--subprocess-errorlog-path", "--errorlog-path",
+        "--subprocess-errorlog-path",
         type=str,
         metavar="PATH",
         help="""
@@ -1071,10 +1124,22 @@ def build_parser():
         """
     )
     transport.add_argument(
+        "--ffmpeg-fout",
+        type=str,
+        metavar="OUTFORMAT",
+        help="""
+        When muxing streams, set the output format to OUTFORMAT.
+
+        Default is "matroska".
+
+        Example: "mpegts"
+        """
+    )
+    transport.add_argument(
         "--ffmpeg-video-transcode",
         metavar="CODEC",
         help="""
-        When muxing streams transcode the video to this CODEC.
+        When muxing streams, transcode the video to CODEC.
 
         Default is "copy".
 
@@ -1085,11 +1150,35 @@ def build_parser():
         "--ffmpeg-audio-transcode",
         metavar="CODEC",
         help="""
-        When muxing streams transcode the audio to this CODEC.
+        When muxing streams, transcode the audio to CODEC.
 
         Default is "copy".
 
         Example: "aac"
+        """
+    )
+    transport.add_argument(
+        "--ffmpeg-copyts",
+        action="store_true",
+        help="""
+        Forces the -copyts ffmpeg option and does not remove
+        the initial start time offset value.
+        """
+    )
+    transport.add_argument(
+        "--ffmpeg-start-at-zero",
+        action="store_true",
+        help="""
+        Enable the -start_at_zero ffmpeg option when using copyts.
+        """
+    )
+    transport.add_argument(
+        "--mux-subtitles",
+        action="store_true",
+        help="""
+        Automatically mux available subtitles into the output stream.
+
+        Needs to be supported by the used plugin.
         """
     )
 

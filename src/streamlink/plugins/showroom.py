@@ -2,7 +2,7 @@ import logging
 import re
 
 from streamlink.plugin import Plugin
-from streamlink.plugin.api import useragents, validate
+from streamlink.plugin.api import validate
 from streamlink.stream import HLSStream, RTMPStream
 from streamlink.stream.hls import HLSStreamReader, HLSStreamWorker
 
@@ -61,7 +61,7 @@ _quality_weights = {
     "low": 160
 }
 # pages that definitely aren't rooms
-_info_pages = set((
+_info_pages = {
     "onlive",
     "campaign",
     "timetable",
@@ -78,7 +78,7 @@ _info_pages = set((
     "s",
     "organizer_registration",
     "lottery"
-))
+}
 
 
 class ShowroomHLSStreamWorker(HLSStreamWorker):
@@ -91,11 +91,7 @@ class ShowroomHLSStreamReader(HLSStreamReader):
 
 
 class ShowroomHLSStream(HLSStream):
-    def open(self):
-        reader = ShowroomHLSStreamReader(self)
-        reader.open()
-
-        return reader
+    __reader__ = ShowroomHLSStreamReader
 
 
 class Showroom(Plugin):
@@ -115,10 +111,7 @@ class Showroom(Plugin):
 
     def __init__(self, url):
         Plugin.__init__(self, url)
-        self._headers = {
-            'Referer': self.url,
-            'User-Agent': useragents.FIREFOX
-        }
+        self._headers = {'Referer': self.url}
         self._room_id = None
         self._stream_urls = None
 

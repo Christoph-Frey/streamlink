@@ -11,7 +11,7 @@ from streamlink.stream.ffmpegmux import MuxedStream
 log = logging.getLogger(__name__)
 
 
-class Experience(object):
+class Experience:
     CSRF_NAME = "csrfmiddlewaretoken"
     login_url = "https://www.funimation.com/log-in/"
     api_base = "https://www.funimation.com/api"
@@ -176,15 +176,7 @@ class FunimationNow(Plugin):
             Default is "english".
             """
         ),
-        PluginArgument(
-            "mux-subtitles",
-            argument_name="funimation-mux-subtitles",
-            action="store_true",
-            help="""
-            Enable automatically including available subtitles in to the output
-            stream.
-            """
-        )
+        PluginArgument("mux-subtitles", is_global=True)
     )
 
     url_re = re.compile(r"""

@@ -3,7 +3,7 @@ import re
 
 from streamlink.exceptions import FatalPluginError, NoStreamsError, PluginError
 from streamlink.plugin import Plugin, PluginArgument, PluginArguments
-from streamlink.plugin.api import useragents, validate
+from streamlink.plugin.api import validate
 from streamlink.stream import HLSStream
 
 log = logging.getLogger(__name__)
@@ -87,13 +87,10 @@ class Pixiv(Plugin):
     )
 
     def __init__(self, url):
-        super(Pixiv, self).__init__(url)
+        super().__init__(url)
         self._authed = (self.session.http.cookies.get("PHPSESSID")
                         and self.session.http.cookies.get("device_token"))
-        self.session.http.headers.update({
-            "User-Agent": useragents.FIREFOX,
-            "Referer": self.url
-        })
+        self.session.http.headers.update({"Referer": self.url})
 
     @classmethod
     def can_handle_url(cls, url):
@@ -113,7 +110,10 @@ class Pixiv(Plugin):
         yield from HLSStream.parse_variant_playlist(self.session, hls_url).items()
 
     def get_streamer_data(self):
-        res = self.session.http.get(self.api_lives)
+        headers = {
+            "X-Requested-With": "https://sketch.pixiv.net/lives",
+        }
+        res = self.session.http.get(self.api_lives, headers=headers)
         data = self.session.http.json(res, schema=self._data_lives_schema)
         log.debug("Found {0} streams".format(len(data)))
 

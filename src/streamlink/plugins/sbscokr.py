@@ -3,7 +3,7 @@ import random
 import re
 
 from streamlink.plugin import Plugin, PluginArgument, PluginArguments
-from streamlink.plugin.api import useragents, validate
+from streamlink.plugin.api import validate
 from streamlink.stream import HLSStream
 
 log = logging.getLogger(__name__)
@@ -69,7 +69,6 @@ class SBScokr(Plugin):
     def _get_streams(self):
         user_channel_id = self.get_option('id')
 
-        self.session.http.headers.update({'User-Agent': useragents.FIREFOX})
         res = self.session.http.get(self.api_channels)
         res = self.session.http.json(res, schema=self._channels_schema)
 
@@ -101,9 +100,7 @@ class SBScokr(Plugin):
 
         for media in res['source']['mediasourcelist']:
             if media['mediaurl']:
-                for s in HLSStream.parse_variant_playlist(self.session,
-                                                          media['mediaurl']).items():
-                    yield s
+                yield from HLSStream.parse_variant_playlist(self.session, media['mediaurl']).items()
         else:
             if res['info']['onair_yn'] != 'Y':
                 log.error('This channel is currently unavailable')

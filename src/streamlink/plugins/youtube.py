@@ -58,7 +58,7 @@ _config_schema = validate.Schema(
     }
 )
 
-_ytdata_re = re.compile(r'window\["ytInitialData"\]\s*=\s*({.*?});', re.DOTALL)
+_ytdata_re = re.compile(r'ytInitialData\s*=\s*({.*?});', re.DOTALL)
 _url_re = re.compile(r"""(?x)https?://(?:\w+\.)?youtube\.com
     (?:
         (?:
@@ -123,7 +123,7 @@ class YouTube(Plugin):
     }
 
     def __init__(self, url):
-        super(YouTube, self).__init__(url)
+        super().__init__(url)
         parsed = urlparse(self.url)
         if parsed.netloc == 'gaming.youtube.com':
             self.url = urlunparse(parsed._replace(netloc='www.youtube.com'))
@@ -249,7 +249,7 @@ class YouTube(Plugin):
                             log.debug("Video ID from videoRenderer (live)")
                             return x["videoId"]
 
-        if "/embed/live_stream" in url:
+        if urlparse(url).path.endswith(("/embed/live_stream", "/live")):
             for link in itertags(res.text, "link"):
                 if link.attributes.get("rel") == "canonical":
                     canon_link = link.attributes.get("href")
@@ -336,10 +336,10 @@ class YouTube(Plugin):
         if hls_manifest:
             try:
                 hls_streams = HLSStream.parse_variant_playlist(
-                    self.session, hls_manifest, namekey="pixels"
+                    self.session, hls_manifest, name_key="pixels"
                 )
                 streams.update(hls_streams)
-            except IOError as err:
+            except OSError as err:
                 log.warning(f"Failed to extract HLS streams: {err}")
 
         if not streams and protected:

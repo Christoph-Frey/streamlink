@@ -2,9 +2,8 @@ import unittest
 from threading import Event
 from unittest.mock import MagicMock, call, patch
 
-from streamlink.stream.hls import HLSStream
-from streamlink.stream.hls_filtered import FilteredHLSStreamReader, FilteredHLSStreamWriter
-from tests.mixins.stream_hls import Playlist, Segment, TestMixinStreamHLS
+from streamlink.stream.hls import HLSStream, HLSStreamReader
+from tests.mixins.stream_hls import EventedHLSStreamWriter, Playlist, Segment, TestMixinStreamHLS
 
 
 FILTERED = "filtered"
@@ -12,63 +11,28 @@ FILTERED = "filtered"
 
 class SegmentFiltered(Segment):
     def __init__(self, *args, **kwargs):
-        super(SegmentFiltered, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.title = FILTERED
 
 
-class _TestSubjectFilteredHLSStreamWriter(FilteredHLSStreamWriter):
-    def __init__(self, *args, **kwargs):
-        super(_TestSubjectFilteredHLSStreamWriter, self).__init__(*args, **kwargs)
-        self.write_wait = Event()
-        self.write_done = Event()
-
-    def write(self, *args, **kwargs):
-        # only write once per step
-        self.write_wait.wait()
-        self.write_wait.clear()
-
-        try:
-            # don't write again during teardown
-            if not self.closed:
-                super(_TestSubjectFilteredHLSStreamWriter, self).write(*args, **kwargs)
-        finally:
-            # notify main thread that writing has finished
-            self.write_done.set()
+class _TestSubjectHLSReader(HLSStreamReader):
+    __writer__ = EventedHLSStreamWriter
 
 
-class _TestSubjectFilteredHLSReader(FilteredHLSStreamReader):
-    __writer__ = _TestSubjectFilteredHLSStreamWriter
-
-
-class _TestSubjectFilteredHLSStream(HLSStream):
-    def open(self):
-        reader = _TestSubjectFilteredHLSReader(self)
-        reader.open()
-
-        return reader
+class _TestSubjectHLSStream(HLSStream):
+    __reader__ = _TestSubjectHLSReader
 
 
 @patch("streamlink.stream.hls.HLSStreamWorker.wait", MagicMock(return_value=True))
 class TestFilteredHLSStream(TestMixinStreamHLS, unittest.TestCase):
-    __stream__ = _TestSubjectFilteredHLSStream
+    __stream__ = _TestSubjectHLSStream
 
     @classmethod
     def filter_sequence(cls, sequence):
         return sequence.segment.title == FILTERED
 
-    def close_thread(self):
-        self.thread.reader.writer.write_wait.set()
-        super(TestFilteredHLSStream, self).close_thread()
-
-    # make one write call on the write thread and wait until it has finished
-    def await_write(self):
-        writer = self.thread.reader.writer
-        writer.write_wait.set()
-        writer.write_done.wait()
-        writer.write_done.clear()
-
     def get_session(self, options=None, *args, **kwargs):
-        session = super(TestFilteredHLSStream, self).get_session(options)
+        session = super().get_session(options)
         session.set_option("hls-live-edge", 2)
         session.set_option("hls-timeout", 0)
         session.set_option("stream-timeout", 0)
@@ -76,7 +40,7 @@ class TestFilteredHLSStream(TestMixinStreamHLS, unittest.TestCase):
         return session
 
     def subject(self, *args, **kwargs):
-        thread, segments = super(TestFilteredHLSStream, self).subject(*args, **kwargs)
+        thread, segments = super().subject(*args, **kwargs)
 
         return thread, thread.reader, thread.reader.writer, segments
 
@@ -86,13 +50,12 @@ class TestFilteredHLSStream(TestMixinStreamHLS, unittest.TestCase):
             Playlist(0, [SegmentFiltered(0), SegmentFiltered(1)], end=True)
         ])
 
-        self.await_write()
-        self.await_write()
+        self.await_write(2)
         data = self.await_read()
         self.assertEqual(data, self.content(segments), "Does not filter by default")
 
-    @patch("streamlink.stream.hls_filtered.FilteredHLSStreamWriter.should_filter_sequence", new=filter_sequence)
-    @patch("streamlink.stream.hls_filtered.log")
+    @patch("streamlink.stream.hls.HLSStreamWriter.should_filter_sequence", new=filter_sequence)
+    @patch("streamlink.stream.hls.log")
     def test_filtered_logging(self, mock_log):
         thread, reader, writer, segments = self.subject([
             Playlist(0, [SegmentFiltered(0), SegmentFiltered(1)]),
@@ -105,14 +68,12 @@ class TestFilteredHLSStream(TestMixinStreamHLS, unittest.TestCase):
         self.assertTrue(reader.filter_event.is_set(), "Doesn't let the reader wait if not filtering")
 
         for i in range(2):
-            self.await_write()
-            self.await_write()
+            self.await_write(2)
             self.assertEqual(len(mock_log.info.mock_calls), i * 2 + 1)
             self.assertEqual(mock_log.info.mock_calls[i * 2 + 0], call("Filtering out segments and pausing stream output"))
             self.assertFalse(reader.filter_event.is_set(), "Lets the reader wait if filtering")
 
-            self.await_write()
-            self.await_write()
+            self.await_write(2)
             self.assertEqual(len(mock_log.info.mock_calls), i * 2 + 2)
             self.assertEqual(mock_log.info.mock_calls[i * 2 + 1], call("Resuming stream output"))
             self.assertTrue(reader.filter_event.is_set(), "Doesn't let the reader wait if not filtering")
@@ -126,7 +87,7 @@ class TestFilteredHLSStream(TestMixinStreamHLS, unittest.TestCase):
         )
         self.assertTrue(all([self.called(s) for s in segments.values()]), "Downloads all segments")
 
-    @patch("streamlink.stream.hls_filtered.FilteredHLSStreamWriter.should_filter_sequence", new=filter_sequence)
+    @patch("streamlink.stream.hls.HLSStreamWriter.should_filter_sequence", new=filter_sequence)
     def test_filtered_timeout(self):
         thread, reader, writer, segments = self.subject([
             Playlist(0, [Segment(0), Segment(1)], end=True)
@@ -142,7 +103,7 @@ class TestFilteredHLSStream(TestMixinStreamHLS, unittest.TestCase):
             self.await_read()
         self.assertEqual(str(cm.exception), "Read timeout", "Raises a timeout error when no data is available to read")
 
-    @patch("streamlink.stream.hls_filtered.FilteredHLSStreamWriter.should_filter_sequence", new=filter_sequence)
+    @patch("streamlink.stream.hls.HLSStreamWriter.should_filter_sequence", new=filter_sequence)
     def test_filtered_no_timeout(self):
         thread, reader, writer, segments = self.subject([
             Playlist(0, [SegmentFiltered(0), SegmentFiltered(1)]),
@@ -151,8 +112,7 @@ class TestFilteredHLSStream(TestMixinStreamHLS, unittest.TestCase):
 
         self.assertTrue(reader.filter_event.is_set(), "Doesn't let the reader wait if not filtering")
 
-        self.await_write()
-        self.await_write()
+        self.await_write(2)
         self.assertFalse(reader.filter_event.is_set(), "Lets the reader wait if filtering")
 
         # make reader read (no data available yet)
@@ -170,7 +130,7 @@ class TestFilteredHLSStream(TestMixinStreamHLS, unittest.TestCase):
         data = self.await_read()
         self.assertEqual(data, self.content(segments, cond=lambda s: s.num >= 2))
 
-    @patch("streamlink.stream.hls_filtered.FilteredHLSStreamWriter.should_filter_sequence", new=filter_sequence)
+    @patch("streamlink.stream.hls.HLSStreamWriter.should_filter_sequence", new=filter_sequence)
     def test_filtered_closed(self):
         thread, reader, writer, segments = self.subject([
             Playlist(0, [SegmentFiltered(0), SegmentFiltered(1)])
@@ -205,3 +165,15 @@ class TestFilteredHLSStream(TestMixinStreamHLS, unittest.TestCase):
         self.assertFalse(thread.error, "Is not a read timeout on stream close")
 
         mock.stop()
+
+    def test_hls_segment_ignore_names(self):
+        thread, reader, writer, segments = self.subject([
+            Playlist(0, [Segment(0), Segment(1), Segment(2), Segment(3)], end=True)
+        ], {"hls-segment-ignore-names": [
+            ".*",
+            "segment0",
+            "segment2",
+        ]})
+
+        self.await_write(4)
+        self.assertEqual(self.await_read(), self.content(segments, cond=lambda s: s.num % 2 > 0))

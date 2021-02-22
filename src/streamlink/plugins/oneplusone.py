@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 from streamlink.exceptions import PluginError
 from streamlink.plugin import Plugin
-from streamlink.plugin.api import useragents, validate
+from streamlink.plugin.api import validate
 from streamlink.stream import HLSStream
 from streamlink.utils import parse_json
 
@@ -55,9 +55,12 @@ class OnePlusOne(Plugin):
         parser = Online_Parser()
         parser.feed(res.text)
         url = parser.iframe_url
-        if url.startswith("//"):
+        log.trace(f"find_iframe url: {url}")
+        if url.startswith("/"):
             p = urlparse(self.url)
-            return "{0}:{1}".format(p.scheme, url)
+            if url.startswith("//"):
+                return "{0}:{1}".format(p.scheme, url)
+            return "{0}://{1}{2}".format(p.scheme, p.netloc, url)
         else:
             return url
 
@@ -71,7 +74,6 @@ class OnePlusOne(Plugin):
                 return data
 
     def _get_streams(self):
-        self.session.http.headers.update({"User-Agent": useragents.FIREFOX})
         res = self.session.http.get(self.url)
         iframe_url = self.find_iframe(res)
         if iframe_url:

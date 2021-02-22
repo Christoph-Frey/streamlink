@@ -72,9 +72,10 @@ class FilmOnHLSStreamReader(HLSStreamReader):
 
 class FilmOnHLS(HLSStream):
     __shortname__ = "hls-filmon"
+    __reader__ = FilmOnHLSStreamReader
 
     def __init__(self, session_, channel=None, vod_id=None, quality="high", **args):
-        super(FilmOnHLS, self).__init__(session_, None, **args)
+        super().__init__(session_, None, **args)
         self.channel = channel
         self.vod_id = vod_id
         if self.channel is None and self.vod_id is None:
@@ -116,14 +117,8 @@ class FilmOnHLS(HLSStream):
             raise TypeError("Stream has expired and cannot be converted to a URL")
         return url
 
-    def open(self):
-        reader = FilmOnHLSStreamReader(self)
-        reader.open()
 
-        return reader
-
-
-class FilmOnAPI(object):
+class FilmOnAPI:
     def __init__(self, session):
         self.session = session
 
@@ -149,17 +144,24 @@ class FilmOnAPI(object):
 
     def channel(self, channel):
         for _ in range(5):
+            if _ > 0:
+                log.debug("channel sleep {0}".format(_))
+                time.sleep(0.75)
+
             # retry for 50X errors
             try:
                 res = self.session.http.get(self.channel_url.format(channel))
                 if res:
-                    break
+                    # retry for invalid response data
+                    try:
+                        return self.session.http.json(res, schema=self.api_schema)
+                    except PluginError:
+                        log.debug("invalid or non-JSON data received")
+                        continue
             except Exception:
-                log.debug("channel sleep {0}".format(_))
-                time.sleep(0.75)
-        else:
-            raise PluginError("Unable to find 'self.api.channel' for {0}".format(channel))
-        return self.session.http.json(res, schema=self.api_schema)
+                log.debug("invalid server response")
+
+        raise PluginError("Unable to find 'self.api.channel' for {0}".format(channel))
 
     def vod(self, vod_id):
         res = self.session.http.get(self.vod_url.format(vod_id))
@@ -197,7 +199,7 @@ class Filmon(Plugin):
     TIME_CHANNEL = 60 * 60 * 24 * 365
 
     def __init__(self, url):
-        super(Filmon, self).__init__(url)
+        super().__init__(url)
         parsed = urlparse(self.url)
         if parsed.path.startswith("/channel/"):
             self.url = urlunparse(parsed._replace(path=parsed.path.replace("/channel/", "/tv/")))

@@ -45,7 +45,7 @@ class TVPlayer(Plugin):
         return match is not None
 
     def __init__(self, url):
-        super(TVPlayer, self).__init__(url)
+        super().__init__(url)
         self.session.http.headers.update({"User-Agent": useragents.CHROME})
 
     def authenticate(self, username, password):
@@ -88,7 +88,7 @@ class TVPlayer(Plugin):
         return res_schema
 
     def _get_stream_attrs(self, page):
-        stream_attrs = dict((k.replace("-", "_"), v.strip('"')) for k, v in self.stream_attrs_re.findall(page.text))
+        stream_attrs = {k.replace("-", "_"): v.strip('"') for k, v in self.stream_attrs_re.findall(page.text)}
 
         log.debug(f"Got stream attributes: {str(stream_attrs)}")
         valid = True

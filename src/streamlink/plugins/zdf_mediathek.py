@@ -83,7 +83,7 @@ _schema = validate.Schema(
 )
 
 
-class zdf_mediathek(Plugin):
+class ZDFMediathek(Plugin):
     @classmethod
     def can_handle_url(cls, url):
         return _url_re.match(url)
@@ -107,7 +107,7 @@ class zdf_mediathek(Plugin):
     def _parse_track(self, track, parser, name):
         try:
             return parser(self.session, track["uri"])
-        except IOError as err:
+        except OSError as err:
             log.error("Failed to extract {0} streams: {1}".format(name, err))
 
     def _extract_from_format(self, format_):
@@ -157,4 +157,4 @@ class zdf_mediathek(Plugin):
         return streams
 
 
-__plugin__ = zdf_mediathek
+__plugin__ = ZDFMediathek
